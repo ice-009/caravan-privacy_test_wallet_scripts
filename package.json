@@ -1,0 +1,12 @@
+{
+  "dependencies": {
+    "bitcoin-core": "^5.0.0",
+    "fs": "^0.0.1-security",
+    "path": "^0.12.7",
+    "yargs": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "@types/yargs": "^17.0.33"
+  }
+}
