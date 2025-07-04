@@ -340,6 +340,177 @@ async function saveCaravanConfig(scenarioName: string, signerData: Array<{pubkey
   return configPath;
 }
 
+// ── NEW: Waste Heavy Scenario ─────────────────────────────────────────────────
+async function wasteHeavy() {
+  const scenarioName = "waste_heavy";
+  console.log(`🏁 Starting ${scenarioName} scenario with 2 real wallets`);
+  
+  const { multisigAddress, signers, coordinatorWallet } = await setupMultisigWithTwoWallets(scenarioName);
+  
+  console.log("🗑️ Creating wasteful transaction patterns...");
+  
+  // 1. Create many tiny dust outputs (wasteful)
+  console.log("💸 Creating 20 dust outputs (0.00001 BTC each)...");
+  const dustOutputs: { [key: string]: number } = {};
+  for (let i = 0; i < 20; i++) {
+    const dustAddr = await rpc<string>(coordinatorWallet, "getnewaddress");
+    dustOutputs[dustAddr] = 0.00001; // 1000 satoshis (dust)
+  }
+  
+  // Send all dust in one transaction
+  const dustTxid = await rpc<string>(coordinatorWallet, "sendmany", "", dustOutputs);
+  console.log(`   Created dust transaction: ${dustTxid}`);
+  await mine(coordinatorWallet, 1);
+  
+  // 2. Create transactions with many small UTXOs that will need to be consolidated later
+  console.log("🔀 Creating 15 small UTXOs (0.1 BTC each)...");
+  for (let i = 0; i < 15; i++) {
+    const smallAddr = await rpc<string>(coordinatorWallet, "getnewaddress");
+    await rpc<string>(coordinatorWallet, "sendtoaddress", smallAddr, 0.1);
+  }
+  await mine(coordinatorWallet, 1);
+  
+  // 3. Create transactions with unnecessary change outputs
+  console.log("🔄 Creating transactions with wasteful change patterns...");
+  for (let i = 0; i < 8; i++) {
+    // Send a weird amount that will create odd change
+    const weirdAddr = await rpc<string>(coordinatorWallet, "getnewaddress");
+    const weirdAmount = 0.12345678; // Weird precision creates small change
+    await rpc<string>(coordinatorWallet, "sendtoaddress", weirdAddr, weirdAmount);
+  }
+  await mine(coordinatorWallet, 1);
+  
+  // 4. Create a transaction that spends many small UTXOs (high fee waste)
+  console.log("💰 Creating high-fee transaction by spending many small UTXOs...");
+  const utxos = await rpc<any[]>(coordinatorWallet, "listunspent", 1);
+  const smallUtxos = utxos.filter(u => u.amount < 0.5).slice(0, 10);
+  
+  if (smallUtxos.length > 0) {
+    const inputs = smallUtxos.map(u => ({ txid: u.txid, vout: u.vout }));
+    const totalAmount = smallUtxos.reduce((sum, u) => sum + u.amount, 0);
+    const outputAmount = Number((totalAmount - 0.01).toFixed(8)); // High fee of 0.01 BTC
+    
+    const consolidationAddr = await rpc<string>(coordinatorWallet, "getnewaddress");
+    
+    if (outputAmount > 0) {
+      const rawTx = await rpc<string>(coordinatorWallet, "createrawtransaction", inputs, { [consolidationAddr]: outputAmount });
+      const signedTx = await rpc<any>(coordinatorWallet, "signrawtransactionwithwallet", rawTx);
+      await rpc<string>(coordinatorWallet, "sendrawtransaction", signedTx.hex);
+      console.log(`   Consolidated ${inputs.length} UTXOs with high fee (0.01 BTC)`);
+    }
+  }
+  await mine(coordinatorWallet, 1);
+  
+  // Replace the OP_RETURN section (around line 405-420) with this improved version:
+
+// 5. Create transactions with OP_RETURN data (blockchain bloat)
+console.log("📝 Creating transactions with OP_RETURN data bloat...");
+for (let i = 0; i < 5; i++) {
+  const dataAddr = await rpc<string>(coordinatorWallet, "getnewaddress");
+  const wasteData = Buffer.from(`Wasteful data ${i}: ${'x'.repeat(60)}`).toString('hex');
+  
+  // Create transaction with OP_RETURN output
+  const inputs = await rpc<any[]>(coordinatorWallet, "listunspent", 1);
+  const suitableInputs = inputs.filter(input => input.amount > 0.01); // Only use inputs with enough value
+  
+  if (suitableInputs.length > 0) {
+    const input = suitableInputs[0];
+    const outputAmount = Number((input.amount - 0.002).toFixed(8)); // Leave more room for fees
+    
+    if (outputAmount > 0.001) { // Only proceed if we have a reasonable output amount
+      try {
+        const rawTx = await rpc<string>(coordinatorWallet, "createrawtransaction", 
+          [{ txid: input.txid, vout: input.vout }], 
+          { 
+            [dataAddr]: outputAmount,
+            "data": wasteData 
+          }
+        );
+        const signedTx = await rpc<any>(coordinatorWallet, "signrawtransactionwithwallet", rawTx);
+        
+        if (signedTx.complete) {
+          await rpc<string>(coordinatorWallet, "sendrawtransaction", signedTx.hex);
+          console.log(`   Created OP_RETURN transaction ${i + 1}/5`);
+        } else {
+          console.log(`   OP_RETURN transaction ${i + 1} signing failed`);
+        }
+      } catch (e: any) {
+        console.log(`   OP_RETURN transaction ${i + 1} failed: ${e.message}`);
+      }
+    } else {
+      console.log(`   OP_RETURN transaction ${i + 1} skipped: insufficient funds`);
+    }
+  } else {
+    console.log(`   OP_RETURN transaction ${i + 1} skipped: no suitable inputs`);
+  }
+}
+  await mine(coordinatorWallet, 1);
+  
+  // 6. Create RBF (Replace-By-Fee) spam by replacing the same transaction multiple times
+  console.log("🔄 Creating RBF spam (multiple fee bumps)...");
+  try {
+    const rbfAddr = await rpc<string>(coordinatorWallet, "getnewaddress");
+    let txid = await rpc<string>(coordinatorWallet, "sendtoaddress", rbfAddr, 1.0, "", "", false, true); // Enable RBF
+    
+    // Try to bump the fee 3 times
+    for (let i = 0; i < 3; i++) {
+      try {
+        const bumpResult = await rpc<any>(coordinatorWallet, "bumpfee", txid, { fee_rate: 10 + (i * 5) });
+        txid = bumpResult.txid;
+        console.log(`   Fee bump ${i + 1}/3: ${txid.slice(0, 16)}...`);
+      } catch (e) {
+        console.log(`   Fee bump ${i + 1} failed (expected)`);
+      }
+    }
+  } catch (e) {
+    console.log("   RBF spam failed (RBF may not be enabled)");
+  }
+  await mine(coordinatorWallet, 1);
+  
+  // 7. Create a transaction chain (child pays for parent scenario)
+  console.log("👶 Creating unconfirmed transaction chain...");
+  try {
+    const chainAddr1 = await rpc<string>(coordinatorWallet, "getnewaddress");
+    const chainAddr2 = await rpc<string>(coordinatorWallet, "getnewaddress");
+    const chainAddr3 = await rpc<string>(coordinatorWallet, "getnewaddress");
+    
+    // Create parent transaction with low fee
+    const parentTxid = await rpc<string>(coordinatorWallet, "sendtoaddress", chainAddr1, 2.0);
+    
+    // Don't mine yet - create child transaction
+    const childTxid = await rpc<string>(coordinatorWallet, "sendtoaddress", chainAddr2, 1.0);
+    
+    // Create grandchild transaction
+    const grandchildTxid = await rpc<string>(coordinatorWallet, "sendtoaddress", chainAddr3, 0.5);
+    
+    console.log(`   Created transaction chain: ${parentTxid.slice(0, 8)}...→${childTxid.slice(0, 8)}...→${grandchildTxid.slice(0, 8)}...`);
+  } catch (e) {
+    console.log("   Transaction chain creation failed");
+  }
+  await mine(coordinatorWallet, 1);
+  
+  await syncWallet(coordinatorWallet);
+  
+  await saveCaravanConfig(scenarioName, signers);
+  console.log("🗑️ waste-heavy multisig created with 2 real wallets");
+  
+  // Display final statistics
+  console.log("\n📊 Waste Heavy Wallet Statistics:");
+  for (const signer of signers) {
+    const balance = await rpc<number>(await loadOrCreateWallet(signer.name), "getbalance");
+    const utxos = await rpc<any[]>(await loadOrCreateWallet(signer.name), "listunspent");
+    console.log(`   ${signer.name}: ${balance} BTC (${utxos.length} UTXOs)`);
+  }
+  
+  // Show mempool info
+  try {
+    const mempoolInfo = await rpc<any>(baseClient, "getmempoolinfo");
+    console.log(`   Mempool: ${mempoolInfo.size} transactions, ${mempoolInfo.bytes} bytes`);
+  } catch (e) {
+    console.log("   Could not get mempool info");
+  }
+}
+
 // ── Updated Privacy Good Scenario ─────────────────────────────────────────────
 async function privacyGood() {
   const scenarioName = "privacy_good";
@@ -480,17 +651,18 @@ async function testMultisigSpending(scenarioName: string) {
   }
 }
 
-// Update CLI options to only include the two privacy scenarios
+// Update CLI options to include the new waste-heavy scenario
 const argv = yargs(hideBin(process.argv))
   .option("scenario", {
     alias: "s",
     choices: [
       "privacy-good", 
       "privacy-bad", 
-      "both"
+      "waste-heavy",
+      "all"
     ] as const,
-    default: "both",
-    describe: "Which privacy scenario to create (2 real wallets each)",
+    default: "all",
+    describe: "Which scenario to create (2 real wallets each)",
   })
   .option("test", {
     alias: "t",
@@ -505,14 +677,19 @@ const argv = yargs(hideBin(process.argv))
   try {
     const resolvedArgv = await argv;
     
-    if (resolvedArgv.scenario === "privacy-good" || resolvedArgv.scenario === "both") {
-      await privacyGood();
-      if (resolvedArgv.test) await testMultisigSpending("privacy_good");
-    }
+    // if (resolvedArgv.scenario === "privacy-good" || resolvedArgv.scenario === "all") {
+    //   await privacyGood();
+    //   if (resolvedArgv.test) await testMultisigSpending("privacy_good");
+    // }
     
-    if (resolvedArgv.scenario === "privacy-bad" || resolvedArgv.scenario === "both") {
-      await privacyBad();
-      if (resolvedArgv.test) await testMultisigSpending("privacy_bad");
+    // if (resolvedArgv.scenario === "privacy-bad" || resolvedArgv.scenario === "all") {
+    //   await privacyBad();
+    //   if (resolvedArgv.test) await testMultisigSpending("privacy_bad");
+    // }
+    
+    if (resolvedArgv.scenario === "waste-heavy" || resolvedArgv.scenario === "all") {
+      await wasteHeavy();
+      if (resolvedArgv.test) await testMultisigSpending("waste_heavy");
     }
 
     console.log("\n🎉 All multisig wallets created successfully!");
@@ -520,6 +697,7 @@ const argv = yargs(hideBin(process.argv))
     console.log("📁 Caravan config files:");
     console.log(`   - privacy_good_caravan.json`);
     console.log(`   - privacy_bad_caravan.json`);
+    console.log(`   - waste_heavy_caravan.json`);
     
   } catch (err) {
     console.error("⚠️ Critical Error:", err);

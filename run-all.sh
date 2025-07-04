@@ -15,6 +15,8 @@ WALLETS=(
   privacy_good_signer_2
   privacy_bad_signer_1
   privacy_bad_signer_2
+  waste_heavy_signer_1
+  waste_heavy_signer_2
 )
 
 # ─── Helper: Is wallet loaded? ───────────────────────────────────
@@ -49,13 +51,17 @@ ADDR_GOOD1=$($CLI -rpcwallet=privacy_good_signer_1 getnewaddress)
 ADDR_GOOD2=$($CLI -rpcwallet=privacy_good_signer_2 getnewaddress)
 ADDR_BAD1=$($CLI -rpcwallet=privacy_bad_signer_1 getnewaddress)
 ADDR_BAD2=$($CLI -rpcwallet=privacy_bad_signer_2 getnewaddress)
+ADDR_WASTE1=$($CLI -rpcwallet=waste_heavy_signer_1 getnewaddress)
+ADDR_WASTE2=$($CLI -rpcwallet=waste_heavy_signer_2 getnewaddress)
 
 # ─── 4. Send 50 BTC to each signer from miner_wallet ─────────────
 for TARGET in \
   "privacy_good_signer_1 $ADDR_GOOD1" \
   "privacy_good_signer_2 $ADDR_GOOD2" \
   "privacy_bad_signer_1  $ADDR_BAD1" \
-  "privacy_bad_signer_2  $ADDR_BAD2"
+  "privacy_bad_signer_2  $ADDR_BAD2" \
+  "waste_heavy_signer_1 $ADDR_WASTE1" \
+  "waste_heavy_signer_2 $ADDR_WASTE2"
 do
   read WALLET ADDR <<< "$TARGET"
   echo "[*] Sending 50 BTC to $WALLET..."
@@ -68,3 +74,6 @@ CONFIRM_ADDR=$($CLI -rpcwallet=miner_wallet getnewaddress)
 $CLI -rpcwallet=miner_wallet generatetoaddress 1 "$CONFIRM_ADDR" >/dev/null
 
 echo "[✔] All four signer wallets funded with 50 BTC each."
+
+
+npx ts-node index.ts   
