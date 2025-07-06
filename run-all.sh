@@ -72,4 +72,4 @@ $CLI -rpcwallet=miner_wallet generatetoaddress 1 "$CONFIRM_ADDR" >/dev/null
 echo "[✔] All six signer wallets funded with 10 BTC each."
 
 
-npx 
+npx ts-node index.ts    
