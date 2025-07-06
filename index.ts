@@ -270,7 +270,7 @@ async function setupMultisigWithTwoWallets(scenarioName: string) {
     console.log(`💰 New coordinator wallet balance: ${balance} BTC`);
     
     // If still insufficient, throw a more helpful error
-    if (balance < 10) {
+    if (balance < 1) {
       throw new Error(`Insufficient funds in coordinator wallet: ${balance} BTC. Need at least 10 BTC to fund multisig.`);
     }
   }
@@ -285,7 +285,7 @@ async function setupMultisigWithTwoWallets(scenarioName: string) {
   
   // Fund the multisig address from the coordinator
   console.log(`💸 Funding multisig with 10 BTC...`);
-  const fundingTxid = await rpc<string>(coordinatorWallet, "sendtoaddress", multisigAddress, 10);
+  const fundingTxid = await rpc<string>(coordinatorWallet, "sendtoaddress", multisigAddress, 1);
   console.log(`   Funding transaction: ${fundingTxid}`);
   
   await mine(coordinatorWallet, 1);
@@ -309,7 +309,102 @@ async function setupMultisigWithTwoWallets(scenarioName: string) {
   };
 }
 
+// Create watcher wallet for Caravan
+// ── Create Watcher Wallet (Legacy) ───────────────────────────────────────────
+async function createWatcherWallet(
+  scenarioName: string, 
+  multisigAddress: string, 
+  redeemScript: string,
+  signers: Array<{ xpub: string; xfp: string }>
+) {
+  const walletName = `${scenarioName}_watcher`;
+  console.log(`👀 Creating watcher wallet: ${walletName}`);
+  
+  try {
+    // Try to create descriptor wallet with blank=false
+    try {
+      await rpc(baseClient, "createwallet", walletName, true, false, "", false, true);
+      console.log("   Created new watcher wallet");
+    } catch (createError: any) {
+      const errMsg = createError.message || "";
+      if (createError.code === -4 && errMsg.includes("already exists")) {
+        console.log("   Wallet already exists, trying to load...");
+        try {
+          await rpc(baseClient, "loadwallet", walletName);
+          console.log("   Wallet loaded");
+        } catch (loadError: any) {
+          if (loadError.code === -35 && loadError.message.includes("already loaded")) {
+            console.log("   Wallet already loaded");
+          } else {
+            throw loadError;
+          }
+        }
+      } else if (createError.code === -35 && errMsg.includes("already loaded")) {
+        console.log("   Wallet already loaded");
+      } else {
+        throw createError;
+      }
+    }
+
+    const watcherWallet = new BitcoinCore({
+      host: `http://${cfg.host}:${cfg.port}`,
+      username: cfg.username,
+      password: cfg.password,
+      wallet: walletName,
+    });
+
+    // Ensure wallet is not blank
+
+    const [signer1, signer2] = signers;
+
+    // Use testnet derivation path (84'/1'/0') for regtest
+    const externalDescriptor = `wsh(multi(2,[${signer1.xfp}/84'/1'/0']${signer1.xpub}/0/*,[${signer2.xfp}/84'/1'/0']${signer2.xpub}/0/*))`;
+    const changeDescriptor = `wsh(multi(2,[${signer1.xfp}/84'/1'/0']${signer1.xpub}/1/*,[${signer2.xfp}/84'/1'/0']${signer2.xpub}/1/*))`;
+
+    console.log("   Importing descriptors...");
+    const importResult = await rpc(watcherWallet, "importdescriptors", [
+      {
+        desc: externalDescriptor,
+        timestamp: "now",
+        active: true,
+        internal: false,
+        watchonly: true,
+      },
+      {
+        desc: changeDescriptor,
+        timestamp: "now",
+        active: true,
+        internal: true,
+        watchonly: true,
+      }
+    ]);
+    
+    console.log("   Descriptor import results:", JSON.stringify(importResult, null, 2));
+    
+    // Force rescan to detect transactions
+    console.log("   Starting rescan...");
+    try {
+      const blockchainInfo = await rpc<any>(baseClient, "getblockchaininfo");
+      await rpc(watcherWallet, "rescanblockchain", 0, blockchainInfo.blocks);
+      console.log("   Rescan completed");
+    } catch (e: any) {
+      console.log("   Rescan error:", e.message);
+    }
+    
+    // Check balance
+    const balance = await rpc<number>(watcherWallet, "getbalance");
+    console.log(`   Watcher balance: ${balance} BTC`);
+    
+    return watcherWallet;
+  } catch (err) {
+    console.error("   Error creating watcher wallet:", err);
+    throw err;
+  }
+}
+
 async function saveCaravanConfig(scenarioName: string, signerData: Array<{pubkey: string, xpub: string, xfp: string, name: string}>) {
+  const watcherWalletName = `${scenarioName}_watcher`;
+  
   const caravanConfig = {
     name: `${scenarioName} Multisig (2-of-2)`,
     addressType: "P2WSH",
@@ -319,33 +414,43 @@ async function saveCaravanConfig(scenarioName: string, signerData: Array<{pubkey
       totalSigners: 2
     },
     extendedPublicKeys: signerData.map((signer, i) => ({
-      name: signer.name,
+      name: signer.name.replace(/_/g, ' '), // Replace underscores with spaces for better display
       xpub: signer.xpub,
-      bip32Path: "m/84'/0'/0'",
+      bip32Path: "m/84'/1'/0'", // Note the 1' for testnet/regtest
       xfp: signer.xfp,
       method: "text"
     })),
-    startingAddressIndex: 0
+    startingAddressIndex: 0,
+    client: {
+      type: "private",
+      url: `http://${cfg.host}:${cfg.port}`,
+      username: cfg.username,
+      password: cfg.password,
+      walletName: watcherWalletName  
+    }
   };
 
   const configPath = path.join(__dirname, `${scenarioName}_caravan.json`);
   fs.writeFileSync(configPath, JSON.stringify(caravanConfig, null, 2));
+  
   console.log(`💾 Caravan config saved to ${configPath}`);
-  console.log(`📋 Extended Public Keys:`);
-  signerData.forEach((signer, i) => {
-    console.log(`   ${signer.name}:`);
-    console.log(`     XPub: ${signer.xpub}`);
-    console.log(`     Fingerprint: ${signer.xfp}`);
-  });
+  console.log(`📋 Client Configuration:`);
+  console.log(`   Type: private`);
+  console.log(`   URL: http://${cfg.host}:${cfg.port}`);
+  console.log(`   Wallet: ${watcherWalletName}`);
+  
   return configPath;
 }
 
-// ── NEW: Waste Heavy Scenario ─────────────────────────────────────────────────
+// ── Waste Heavy Scenario ─────────────────────────────────────────────────
 async function wasteHeavy() {
   const scenarioName = "waste_heavy";
   console.log(`🏁 Starting ${scenarioName} scenario with 2 real wallets`);
   
-  const { multisigAddress, signers, coordinatorWallet } = await setupMultisigWithTwoWallets(scenarioName);
+  const { multisigAddress, redeemScript, signers, coordinatorWallet } = await setupMultisigWithTwoWallets(scenarioName);
+  
+  // Create watcher wallet
+  await createWatcherWallet(scenarioName, multisigAddress, redeemScript, signers);
   
   console.log("🗑️ Creating wasteful transaction patterns...");
   
@@ -401,49 +506,47 @@ async function wasteHeavy() {
   }
   await mine(coordinatorWallet, 1);
   
-  // Replace the OP_RETURN section (around line 405-420) with this improved version:
-
-// 5. Create transactions with OP_RETURN data (blockchain bloat)
-console.log("📝 Creating transactions with OP_RETURN data bloat...");
-for (let i = 0; i < 5; i++) {
-  const dataAddr = await rpc<string>(coordinatorWallet, "getnewaddress");
-  const wasteData = Buffer.from(`Wasteful data ${i}: ${'x'.repeat(60)}`).toString('hex');
-  
-  // Create transaction with OP_RETURN output
-  const inputs = await rpc<any[]>(coordinatorWallet, "listunspent", 1);
-  const suitableInputs = inputs.filter(input => input.amount > 0.01); // Only use inputs with enough value
-  
-  if (suitableInputs.length > 0) {
-    const input = suitableInputs[0];
-    const outputAmount = Number((input.amount - 0.002).toFixed(8)); // Leave more room for fees
+  // 5. Create transactions with OP_RETURN data (blockchain bloat)
+  console.log("📝 Creating transactions with OP_RETURN data bloat...");
+  for (let i = 0; i < 5; i++) {
+    const dataAddr = await rpc<string>(coordinatorWallet, "getnewaddress");
+    const wasteData = Buffer.from(`Wasteful data ${i}: ${'x'.repeat(60)}`).toString('hex');
     
-    if (outputAmount > 0.001) { // Only proceed if we have a reasonable output amount
-      try {
-        const rawTx = await rpc<string>(coordinatorWallet, "createrawtransaction", 
-          [{ txid: input.txid, vout: input.vout }], 
-          { 
-            [dataAddr]: outputAmount,
-            "data": wasteData 
+    // Create transaction with OP_RETURN output
+    const inputs = await rpc<any[]>(coordinatorWallet, "listunspent", 1);
+    const suitableInputs = inputs.filter(input => input.amount > 0.01); // Only use inputs with enough value
+    
+    if (suitableInputs.length > 0) {
+      const input = suitableInputs[0];
+      const outputAmount = Number((input.amount - 0.002).toFixed(8)); // Leave more room for fees
+      
+      if (outputAmount > 0.001) { // Only proceed if we have a reasonable output amount
+        try {
+          const rawTx = await rpc<string>(coordinatorWallet, "createrawtransaction", 
+            [{ txid: input.txid, vout: input.vout }], 
+            { 
+              [dataAddr]: outputAmount,
+              "data": wasteData 
+            }
+          );
+          const signedTx = await rpc<any>(coordinatorWallet, "signrawtransactionwithwallet", rawTx);
+          
+          if (signedTx.complete) {
+            await rpc<string>(coordinatorWallet, "sendrawtransaction", signedTx.hex);
+            console.log(`   Created OP_RETURN transaction ${i + 1}/5`);
+          } else {
+            console.log(`   OP_RETURN transaction ${i + 1} signing failed`);
           }
-        );
-        const signedTx = await rpc<any>(coordinatorWallet, "signrawtransactionwithwallet", rawTx);
-        
-        if (signedTx.complete) {
-          await rpc<string>(coordinatorWallet, "sendrawtransaction", signedTx.hex);
-          console.log(`   Created OP_RETURN transaction ${i + 1}/5`);
-        } else {
-          console.log(`   OP_RETURN transaction ${i + 1} signing failed`);
+        } catch (e: any) {
+          console.log(`   OP_RETURN transaction ${i + 1} failed: ${e.message}`);
         }
-      } catch (e: any) {
-        console.log(`   OP_RETURN transaction ${i + 1} failed: ${e.message}`);
+      } else {
+        console.log(`   OP_RETURN transaction ${i + 1} skipped: insufficient funds`);
       }
     } else {
-      console.log(`   OP_RETURN transaction ${i + 1} skipped: insufficient funds`);
+      console.log(`   OP_RETURN transaction ${i + 1} skipped: no suitable inputs`);
     }
-  } else {
-    console.log(`   OP_RETURN transaction ${i + 1} skipped: no suitable inputs`);
   }
-}
   await mine(coordinatorWallet, 1);
   
   // 6. Create RBF (Replace-By-Fee) spam by replacing the same transaction multiple times
@@ -511,12 +614,15 @@ for (let i = 0; i < 5; i++) {
   }
 }
 
-// ── Updated Privacy Good Scenario ─────────────────────────────────────────────
+// ── Privacy Good Scenario ─────────────────────────────────────────────
 async function privacyGood() {
   const scenarioName = "privacy_good";
   console.log(`🏁 Starting ${scenarioName} scenario with 2 real wallets`);
   
-  const { multisigAddress, signers, coordinatorWallet } = await setupMultisigWithTwoWallets(scenarioName);
+  const { multisigAddress, redeemScript, signers, coordinatorWallet } = await setupMultisigWithTwoWallets(scenarioName);
+  
+  // Create watcher wallet
+  await createWatcherWallet(scenarioName, multisigAddress, redeemScript, signers);
   
   // Create 10 clean transactions with unique addresses
   console.log("✨ Creating 10 clean transactions (no address reuse)...");
@@ -539,12 +645,15 @@ async function privacyGood() {
   }
 }
 
-// ── Updated Privacy Bad Scenario ──────────────────────────────────────────────
+// ── Privacy Bad Scenario ──────────────────────────────────────────────
 async function privacyBad() {
   const scenarioName = "privacy_bad";
   console.log(`🏁 Starting ${scenarioName} scenario with 2 real wallets`);
   
-  const { multisigAddress, signers, coordinatorWallet } = await setupMultisigWithTwoWallets(scenarioName);
+  const { multisigAddress, redeemScript, signers, coordinatorWallet } = await setupMultisigWithTwoWallets(scenarioName);
+  
+  // Create watcher wallet
+  await createWatcherWallet(scenarioName, multisigAddress, redeemScript, signers);
   
   // Reuse same address multiple times (bad for privacy)
   console.log("♻️ Reusing address for multiple transactions (bad privacy)...");
@@ -682,15 +791,15 @@ const argv = yargs(hideBin(process.argv))
     //   if (resolvedArgv.test) await testMultisigSpending("privacy_good");
     // }
     
-    // if (resolvedArgv.scenario === "privacy-bad" || resolvedArgv.scenario === "all") {
-    //   await privacyBad();
-    //   if (resolvedArgv.test) await testMultisigSpending("privacy_bad");
-    // }
-    
-    if (resolvedArgv.scenario === "waste-heavy" || resolvedArgv.scenario === "all") {
-      await wasteHeavy();
-      if (resolvedArgv.test) await testMultisigSpending("waste_heavy");
+    if (resolvedArgv.scenario === "privacy-bad" || resolvedArgv.scenario === "all") {
+      await privacyBad();
+      if (resolvedArgv.test) await testMultisigSpending("privacy_bad");
     }
+    
+    // if (resolvedArgv.scenario === "waste-heavy" || resolvedArgv.scenario === "all") {
+    //   await wasteHeavy();
+    //   if (resolvedArgv.test) await testMultisigSpending("waste_heavy");
+    // }
 
     console.log("\n🎉 All multisig wallets created successfully!");
     console.log(`Connect Caravan to: ${cfg.network}@${cfg.host}:${cfg.port}`);
@@ -698,6 +807,10 @@ const argv = yargs(hideBin(process.argv))
     console.log(`   - privacy_good_caravan.json`);
     console.log(`   - privacy_bad_caravan.json`);
     console.log(`   - waste_heavy_caravan.json`);
+    console.log("\n👀 Watcher wallets created for each scenario:");
+    console.log(`   - privacy_good_watcher`);
+    console.log(`   - privacy_bad_watcher`);
+    console.log(`   - waste_heavy_watcher`);
     
   } catch (err) {
     console.error("⚠️ Critical Error:", err);

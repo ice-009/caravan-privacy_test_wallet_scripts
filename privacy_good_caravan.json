@@ -1,0 +1,33 @@
+{
+  "name": "privacy_good Multisig (2-of-2)",
+  "addressType": "P2WSH",
+  "network": "regtest",
+  "quorum": {
+    "requiredSigners": 2,
+    "totalSigners": 2
+  },
+  "extendedPublicKeys": [
+    {
+      "name": "privacy_good_signer_1",
+      "xpub": "tpubDCJgWyCkAyimQ4ZtiK7z5nkKrcFHzESAiLLw9RAigyAjNGtqSwcNaXMQuFCNfeGMtH9X73X9tnJARNf6gCisTEvLniARZyzju9czVwKenJA",
+      "bip32Path": "m/84'/1'/0'",
+      "xfp": "fa5e669a",
+      "method": "text"
+    },
+    {
+      "name": "privacy_good_signer_2",
+      "xpub": "tpubDDFFV9ExggiH5YPbJpAWi4e8CFeUWdAXppJjcibjpFQ4ZwyE5vHavq9Tz13CdRSqrw4F1EW9puwW4EeedwhLAfCRKcuSpgDqKeTDcqmD2NF",
+      "bip32Path": "m/84'/1'/0'",
+      "xfp": "3c76edef",
+      "method": "text"
+    }
+  ],
+  "startingAddressIndex": 0,
+  "client": {
+    "type": "private",
+    "url": "http://bitcoind.localhost:8080",
+    "username": "alice",
+    "walletName": "privacy_good_watcher"
+  },
+  "ledgerPolicyHmacs": []
+}

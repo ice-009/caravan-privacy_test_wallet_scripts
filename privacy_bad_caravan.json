@@ -1,0 +1,33 @@
+{
+  "name": "privacy_bad Multisig (2-of-2)",
+  "addressType": "P2WSH",
+  "network": "regtest",
+  "quorum": {
+    "requiredSigners": 2,
+    "totalSigners": 2
+  },
+  "extendedPublicKeys": [
+    {
+      "name": "privacy bad signer 1",
+      "xpub": "tpubDDAnPemCeoVY1p5PmNZhLd1GxyJDE7cLFwongnZ3mAHCN4z4myTvkuFZKqhEBwpr2QUAriwvr28YX4bcfUw5fmVTF6EUkhzK1DkkAScyECn",
+      "bip32Path": "m/84'/1'/0'",
+      "xfp": "613291c3",
+      "method": "text"
+    },
+    {
+      "name": "privacy bad signer 2",
+      "xpub": "tpubDDHbKTZ7p7uYX4ZiKjWq3iuTv8L78FTECFVch3XV6rGPhyjPpBqtDP7bsT9t3s7wWdrZJaEMeudb5JF9r1NGck1XdVPtE53nH5fXwpEzMxH",
+      "bip32Path": "m/84'/1'/0'",
+      "xfp": "eb377cbb",
+      "method": "text"
+    }
+  ],
+  "startingAddressIndex": 0,
+  "client": {
+    "type": "private",
+    "url": "http://localhost:18443",
+    "username": "alice",
+    "password": "password",
+    "walletName": "privacy_bad_watcher"
+  }
+}

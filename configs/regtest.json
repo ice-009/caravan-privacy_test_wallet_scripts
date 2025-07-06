@@ -1,7 +1,7 @@
 {
   "network": "regtest",
   "host": "localhost",
-  "port": 18444,
+  "port": 18443,
   "username": "alice",
   "password": "password",
   "wallet": "test_wallet_gamma"
